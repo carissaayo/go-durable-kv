@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +32,7 @@ func Open(cfg Config) (*Engine, error) {
 
 	e := &Engine{
 		config: cfg,
+		index:  make(map[string][]byte),
 	}
 
 	return e, nil
@@ -44,7 +46,11 @@ func (e *Engine) Set(key string, value []byte) error {
 		return ErrClosed
 	}
 
-	e.index[key] = value
+	if int64(len(value)) > e.config.MaxValueSize {
+		return ErrValueTooLarge
+	}
+
+	e.index[key] = bytes.Clone(value)
 
 	return nil
 }
