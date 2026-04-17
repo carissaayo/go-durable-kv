@@ -81,3 +81,23 @@ func (e *Engine) Delete(key string) error {
 	delete(e.index, key)
 	return nil
 }
+
+func (e *Engine) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return nil // idempotent close
+	}
+
+	e.closed = true
+
+	if e.db != nil {
+		if err := e.db.Close(); err != nil {
+			return err
+		}
+		e.db = nil
+	}
+
+	return nil
+}
