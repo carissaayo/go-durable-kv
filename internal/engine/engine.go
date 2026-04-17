@@ -11,6 +11,7 @@ type Engine struct {
 	config Config
 	db     *os.File // or a more specific handle
 	mu     sync.RWMutex
+	index  map[string][]byte
 	closed bool
 }
 
@@ -35,7 +36,18 @@ func Open(cfg Config) (*Engine, error) {
 	return e, nil
 }
 
-func (e *Engine) Set(key string, value []byte) error
+func (e *Engine) Set(key string, value []byte) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return ErrClosed
+	}
+
+	e.index[key] = value
+
+	return nil
+}
 
 func (e *Engine) Get(key string) ([]byte, bool, error)
 
