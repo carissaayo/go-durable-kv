@@ -34,3 +34,9 @@ func Open(cfg Config) (*Engine, error) {
 
 	return e, nil
 }
+
+func (e *Engine) Set(key string, value []byte) error
+
+func (e *Engine) Get(key string) ([]byte, bool, error)
+
+func (e *Engine) Delete(key string) error
