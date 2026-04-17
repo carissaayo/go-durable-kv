@@ -19,6 +19,7 @@ type Engine struct {
 var (
 	ErrClosed        = errors.New("engine is closed")
 	ErrValueTooLarge = errors.New("value exceeds MaxValueSize")
+	ErrKeyNotFound   = errors.New("key not found")
 )
 
 func Open(cfg Config) (*Engine, error) {
@@ -55,6 +56,21 @@ func (e *Engine) Set(key string, value []byte) error {
 	return nil
 }
 
-func (e *Engine) Get(key string) ([]byte, bool, error)
+func (e *Engine) Get(key string) ([]byte, bool, error) {
+	e.mu.RLock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return nil, false, ErrClosed
+	}
+
+	value, ok := e.index[key]
+	if !ok {
+		return nil, false, ErrKeyNotFound
+	}
+
+	return bytes.Clone(value), true, nil
+
+}
 
 func (e *Engine) Delete(key string) error
