@@ -1,0 +1,23 @@
+# Server data and local test artifacts
+data/
+big.bin
+.tmp
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test & build
+*.test
+*.out
+coverage.out
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
