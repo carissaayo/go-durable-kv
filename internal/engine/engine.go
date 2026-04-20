@@ -19,6 +19,7 @@ type Engine struct {
 var (
 	ErrClosed        = errors.New("engine is closed")
 	ErrValueTooLarge = errors.New("value exceeds MaxValueSize")
+	ErrKeyTooLarge   = errors.New("key exceeds uint32 WAL limit")
 )
 
 func Open(cfg Config) (*Engine, error) {
