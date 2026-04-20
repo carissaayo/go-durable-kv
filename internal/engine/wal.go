@@ -188,4 +188,10 @@ func (w *WAL) Append(op Op, key string, value []byte) error {
 	return nil
 }
 
+func (w *WAL) Sync() error {
+	if err := w.buf.Flush(); err != nil { // flush bufio buffer → OS
+		return err
+	}
+	return w.file.Sync() // fsync → disk
+}
 func (wal *WAL) Close() error
