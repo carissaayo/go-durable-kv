@@ -167,6 +167,25 @@ func OpenWAL(path string, syncPolicy SyncPolicy) (*WAL, error) {
 	}, nil
 }
 
-func (wal *WAL) Append(op Op, key string, val []byte) error
+func (w *WAL) Append(op Op, key string, value []byte) error {
+
+	if w == nil {
+		return errors.New("wal is nil")
+	}
+	if w.buf == nil || w.file == nil {
+		return errors.New("wal is not initialized")
+	}
+
+	record, err := encodeRecord(op, key, value)
+	if err != nil {
+		return fmt.Errorf("record encode: %w", err)
+	}
+
+	if _, err := w.buf.Write(record); err != nil {
+		return fmt.Errorf("wal write: %w", err)
+	}
+
+	return nil
+}
 
 func (wal *WAL) Close() error
