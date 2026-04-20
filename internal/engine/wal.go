@@ -185,6 +185,12 @@ func (w *WAL) Append(op Op, key string, value []byte) error {
 		return fmt.Errorf("wal write: %w", err)
 	}
 
+	if w.syncPolicy == SyncAlways {
+		if err := w.Sync(); err != nil {
+			return fmt.Errorf("wal sync: %w", err)
+		}
+	}
+
 	return nil
 }
 
