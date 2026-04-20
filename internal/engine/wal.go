@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 )
 
 type Op byte
@@ -144,7 +145,27 @@ func decodeRecord(r io.Reader) (*Record, error) {
 		Value: bytes.Clone(payload[keyLen:]),
 	}, nil
 }
-func (wal *WAL) OpenWAL(path string, policy string) (*WAL, error)
+
+func OpenWAL(path string, syncPolicy SyncPolicy) (*WAL, error) {
+
+	// Ensure the WAL directory exists, even if caller forgot to create it.
+	dir := filepath.Dir(path)
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create wal dir %q: %w", dir, err)
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open wal: %w", err)
+	}
+	return &WAL{
+		file:       f,
+		buf:        bufio.NewWriter(f),
+		path:       path,
+		syncPolicy: syncPolicy,
+	}, nil
+}
 
 func (wal *WAL) Append(op Op, key string, val []byte) error
 
