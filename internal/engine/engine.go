@@ -47,6 +47,14 @@ func Open(cfg Config) (*Engine, error) {
 		wal:    wal,
 	}
 
+	snap, err := e.loadSnapshot()
+	if err != nil {
+		_ = wal.Close()
+		return nil, fmt.Errorf("loading snapshot: %w", err)
+	}
+
+	e.index = snap
+
 	if err := e.wal.Replay(func(rec *Record) error {
 		switch rec.Op {
 		case OpSet:
