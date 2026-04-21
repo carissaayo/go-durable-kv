@@ -47,6 +47,21 @@ func Open(cfg Config) (*Engine, error) {
 		wal:    wal,
 	}
 
+	if err := e.wal.Replay(func(rec *Record) error {
+		switch rec.Op {
+		case OpSet:
+			e.index[rec.Key] = bytes.Clone(rec.Value)
+		case OpDelete:
+			delete(e.index, rec.Key)
+		default:
+			return ErrUnknownOp
+		}
+		return nil
+	}); err != nil {
+		_ = wal.Close()
+		return nil, fmt.Errorf("replay wal: %w", err)
+	}
+
 	return e, nil
 }
 
