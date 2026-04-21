@@ -13,6 +13,47 @@ type Snapshot struct {
 	Data map[string][]byte
 }
 
+// writeSnapshotFile writes snapshot.gob under dataDir using temp+rename.
+// No engine mutex — caller must not pass a map that is still being mutated.
+func writeSnapshotFile(dataDir string, data map[string][]byte) error {
+
+	snap := Snapshot{Data: data}
+	finalPath := filepath.Join(dataDir, "snapshot.gob")
+	tmpPath := filepath.Join(dataDir, "snapshot.tmp")
+
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("create tmp snapshot: %w", err)
+	}
+
+	cleanupOnErr := func(cause error) error {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return cause
+	}
+
+	enc := gob.NewEncoder(f)
+	if err := enc.Encode(&snap); err != nil {
+		return cleanupOnErr(fmt.Errorf("encode snapshot: %w", err))
+	}
+
+	if err := f.Sync(); err != nil {
+		return cleanupOnErr(fmt.Errorf("sync snapshot: %w", err))
+	}
+
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close tmp snapshot: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename snapshot: %w", err)
+	}
+
+	return nil
+}
+
 func (e *Engine) loadSnapshot() (map[string][]byte, error) {
 	path := filepath.Join(e.config.DataDir, "snapshot.gob")
 	f, err := os.Open(path)
@@ -39,43 +80,10 @@ func (e *Engine) loadSnapshot() (map[string][]byte, error) {
 
 func (e *Engine) saveSnapshot() error {
 	e.mu.RLock()
-	clonedIndex := make(map[string][]byte, len(e.index))
+	cloned := make(map[string][]byte, len(e.index))
 	for k, v := range e.index {
-		clonedIndex[k] = bytes.Clone(v)
+		cloned[k] = bytes.Clone(v)
 	}
 	e.mu.RUnlock()
-
-	snap := Snapshot{Data: clonedIndex}
-	finalPath := filepath.Join(e.config.DataDir, "snapshot.gob")
-	tmpPath := filepath.Join(e.config.DataDir, "snapshot.tmp")
-
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		return fmt.Errorf("create tmp snapshot: %w", err)
-	}
-
-	cleanupOnErr := func(cause error) error {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return cause
-	}
-
-	enc := gob.NewEncoder(f)
-	if err := enc.Encode(&snap); err != nil {
-		return cleanupOnErr(fmt.Errorf("encode snapshot: %w", err))
-	}
-
-	if err := f.Sync(); err != nil {
-		return cleanupOnErr(fmt.Errorf("sync snapshot: %w", err))
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close tmp snapshot: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename snapshot: %w", err)
-	}
-	return nil
+	return writeSnapshotFile(e.config.DataDir, cloned)
 }
