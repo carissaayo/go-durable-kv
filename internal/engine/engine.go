@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -14,6 +15,7 @@ type Engine struct {
 	mu     sync.RWMutex
 	index  map[string][]byte
 	closed bool
+	wal    *WAL
 }
 
 var (
@@ -31,9 +33,17 @@ func Open(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
+	walPath := filepath.Join(cfg.DataDir, "wal.log")
+
+	wal, err := OpenWAL(walPath, cfg.SyncPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("opening WAL: %w", err)
+	}
+
 	e := &Engine{
 		config: cfg,
 		index:  make(map[string][]byte),
+		wal:    wal,
 	}
 
 	return e, nil

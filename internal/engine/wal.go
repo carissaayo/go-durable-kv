@@ -200,4 +200,9 @@ func (w *WAL) Sync() error {
 	}
 	return w.file.Sync() // fsync → disk
 }
-func (wal *WAL) Close() error
+func (w *WAL) Close() error {
+	if err := w.Sync(); err != nil {
+		return err
+	}
+	return w.file.Close()
+}
