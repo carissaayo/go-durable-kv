@@ -19,9 +19,10 @@ type Engine struct {
 }
 
 var (
-	ErrClosed        = errors.New("engine is closed")
-	ErrValueTooLarge = errors.New("value exceeds MaxValueSize")
-	ErrKeyTooLarge   = errors.New("key exceeds uint32 WAL limit")
+	ErrClosed              = errors.New("engine is closed")
+	ErrValueTooLarge       = errors.New("value exceeds MaxValueSize")
+	ErrKeyTooLarge         = errors.New("key exceeds uint32 WAL limit")
+	ErrFailedToAppendToWAL = errors.New("unable to append to WAL")
 )
 
 func Open(cfg Config) (*Engine, error) {
@@ -61,6 +62,10 @@ func (e *Engine) Set(key string, value []byte) error {
 		return ErrValueTooLarge
 	}
 
+	if err := e.wal.Append(OpSet, key, value); err != nil {
+		return ErrFailedToAppendToWAL
+	}
+
 	e.index[key] = bytes.Clone(value)
 
 	return nil
@@ -89,6 +94,10 @@ func (e *Engine) Delete(key string) error {
 	if e.closed {
 		return ErrClosed
 	}
+
+	if err := e.wal.Append(OpDelete, key, nil); err != nil {
+		return fmt.Errorf("%w: %v", ErrFailedToAppendToWAL, err)
+	}
 	delete(e.index, key)
 	return nil
 }
@@ -102,6 +111,14 @@ func (e *Engine) Close() error {
 	}
 
 	e.closed = true
+
+	if e.wal != nil {
+		if err := e.wal.Close(); err != nil {
+			return err
+
+		}
+
+	}
 
 	if e.db != nil {
 		if err := e.db.Close(); err != nil {
