@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -79,11 +80,35 @@ func (e *Engine) loadSnapshot() (map[string][]byte, error) {
 }
 
 func (e *Engine) saveSnapshot() error {
+
 	e.mu.RLock()
 	cloned := make(map[string][]byte, len(e.index))
 	for k, v := range e.index {
 		cloned[k] = bytes.Clone(v)
 	}
 	e.mu.RUnlock()
+
 	return writeSnapshotFile(e.config.DataDir, cloned)
+}
+
+func (e *Engine) truncateWAL() error {
+
+	if e.wal == nil {
+		return errors.New("wal is nil")
+	}
+
+	if err := e.wal.Sync(); err != nil {
+		return fmt.Errorf("sync wal before truncate: %w", err)
+	}
+
+	if err := e.wal.file.Truncate(0); err != nil {
+		return fmt.Errorf("truncate wal file: %w", err)
+	}
+
+	if _, err := e.wal.file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek wal after truncate: %w", err)
+	}
+
+	e.wal.buf.Reset(e.wal.file)
+	return nil
 }
