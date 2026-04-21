@@ -146,6 +146,41 @@ func decodeRecord(r io.Reader) (*Record, error) {
 	}, nil
 }
 
+func (w *WAL) Replay(apply func(rec *Record) error) error {
+	f, err := os.Open(w.path)
+
+	if err != nil {
+		return fmt.Errorf("open wal for replay: %w", err)
+	}
+	defer f.Close()
+
+	r := bufio.NewReader(f)
+
+	for {
+		rec, err := decodeRecord(r)
+		if err == nil {
+			if err := apply(rec); err != nil {
+				return fmt.Errorf("apply record: %w", err)
+			}
+			continue
+		}
+
+		switch {
+		case errors.Is(err, io.EOF):
+			return nil // clean end
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return nil // partial tail, ignore
+		case errors.Is(err, ErrCorrupted):
+			return nil // checksum mismatch at tail/corrupt point, stop
+		case errors.Is(err, ErrUnknownOp):
+			return nil // invalid op, stop
+		default:
+			return fmt.Errorf("replay decode: %w", err)
+		}
+	}
+
+}
+
 func OpenWAL(path string, syncPolicy SyncPolicy) (*WAL, error) {
 
 	// Ensure the WAL directory exists, even if caller forgot to create it.
