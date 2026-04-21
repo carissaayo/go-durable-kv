@@ -91,6 +91,39 @@ func (e *Engine) saveSnapshot() error {
 	return writeSnapshotFile(e.config.DataDir, cloned)
 }
 
+func (e *Engine) snapshotAndCompact() error {
+
+	if e.wal == nil {
+		return errors.New("wal is nil")
+	}
+
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return ErrClosed
+	}
+	cloned := make(map[string][]byte, len(e.index))
+	for k, v := range e.index {
+		cloned[k] = bytes.Clone(v)
+	}
+	e.mu.Unlock()
+
+	if err := writeSnapshotFile(e.config.DataDir, cloned); err != nil {
+		return fmt.Errorf("compact: write snapshot: %w", err)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return ErrClosed
+	}
+
+	if err := e.truncateWAL(); err != nil {
+		return fmt.Errorf("compact: truncate wal: %w", err)
+	}
+	return nil
+}
+
 func (e *Engine) truncateWAL() error {
 
 	if e.wal == nil {
