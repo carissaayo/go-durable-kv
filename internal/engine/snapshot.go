@@ -14,8 +14,6 @@ type Snapshot struct {
 	Data map[string][]byte
 }
 
-// writeSnapshotFile writes snapshot.gob under dataDir using temp+rename.
-// No engine mutex — caller must not pass a map that is still being mutated.
 func writeSnapshotFile(dataDir string, data map[string][]byte) error {
 
 	snap := Snapshot{Data: data}
