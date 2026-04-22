@@ -18,14 +18,19 @@ var (
 )
 
 type Engine struct {
-	config Config
-	db     *os.File
-	mu     sync.RWMutex
-	index  map[string][]byte
-	closed bool
-	wal    *WAL
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	config  Config
+	db      *os.File
+	mu      sync.RWMutex
+	index   map[string][]byte
+	closed  bool
+	wal     *WAL
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
+	metrics *Metrics
+}
+
+func (e *Engine) MetricsSnapshot() MetricsSnapshot {
+	return e.metrics.Snapshot()
 }
 
 func Open(cfg Config) (*Engine, error) {
@@ -46,10 +51,11 @@ func Open(cfg Config) (*Engine, error) {
 	}
 
 	e := &Engine{
-		config: cfg,
-		index:  make(map[string][]byte),
-		wal:    wal,
-		stopCh: make(chan struct{}),
+		config:  cfg,
+		index:   make(map[string][]byte),
+		wal:     wal,
+		stopCh:  make(chan struct{}),
+		metrics: NewMetrics(),
 	}
 
 	snap, err := e.loadSnapshot()
