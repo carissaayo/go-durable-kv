@@ -191,6 +191,11 @@ func (e *Engine) Close() error {
 }
 
 func (e *Engine) startSyncLoop() {
+
+	if e.config.SyncInterval <= 0 {
+		e.config.SyncInterval = time.Second
+	}
+
 	e.wg.Add(1)
 	go e.syncLoop()
 }
