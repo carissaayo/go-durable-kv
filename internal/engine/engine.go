@@ -26,10 +26,11 @@ var (
 )
 
 func Open(cfg Config) (*Engine, error) {
-	// 1. Validate / normalise config
+
 	if cfg.DataDir == "" {
 		return nil, errors.New("DataDir must not be empty")
 	}
+
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
@@ -74,22 +75,43 @@ func Open(cfg Config) (*Engine, error) {
 }
 
 func (e *Engine) Set(key string, value []byte) error {
+	var shouldCompact bool
+
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	if e.closed {
+		e.mu.Unlock()
 		return ErrClosed
 	}
 
 	if int64(len(value)) > e.config.MaxValueSize {
+		e.mu.Unlock()
 		return ErrValueTooLarge
 	}
 
 	if err := e.wal.Append(OpSet, key, value); err != nil {
-		return ErrFailedToAppendToWAL
+		e.mu.Unlock()
+		return fmt.Errorf("%w: %v", ErrFailedToAppendToWAL, err)
 	}
 
 	e.index[key] = bytes.Clone(value)
+
+	if e.config.MaxWALSizeBytes > 0 && e.wal != nil && e.wal.file != nil {
+		info, err := e.wal.file.Stat()
+		if err != nil {
+			e.mu.Unlock()
+			return fmt.Errorf("stat wal: %w", err)
+		}
+		// Include bytes still in bufio buffer.
+		currentWALBytes := info.Size() + int64(e.wal.buf.Buffered())
+		shouldCompact = currentWALBytes >= e.config.MaxWALSizeBytes
+	}
+
+	if shouldCompact {
+		if err := e.snapshotAndCompact(); err != nil {
+			return fmt.Errorf("auto-compact after set: %w", err)
+		}
+	}
 
 	return nil
 }
