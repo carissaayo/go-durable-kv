@@ -230,6 +230,11 @@ func (e *Engine) syncLoop() {
 }
 
 func (e *Engine) stopSyncLoop() {
-	close(e.stopCh)
+	select {
+	case <-e.stopCh:
+
+	default:
+		close(e.stopCh)
+	}
 	e.wg.Wait()
 }
