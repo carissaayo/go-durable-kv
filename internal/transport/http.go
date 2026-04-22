@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /keys/{key}", s.handleGet)
 	s.mux.HandleFunc("DELETE /keys/{key}", s.handleDelete)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -90,4 +92,13 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	m := s.engine.MetricsSnapshot()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(m); err != nil {
+		http.Error(w, "encode metrics failed", http.StatusInternalServerError)
+		return
+	}
 }
