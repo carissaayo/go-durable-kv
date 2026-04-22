@@ -214,8 +214,11 @@ func (e *Engine) syncLoop() {
 				e.mu.Unlock()
 				return
 			}
-			if err := e.wal.Sync(); err != nil {
-				fmt.Printf("periodic sync error: %v\n", err)
+
+			if e.wal != nil {
+				if err := e.wal.Sync(); err != nil {
+					fmt.Printf("periodic sync error: %v\n", err)
+				}
 			}
 			e.mu.Unlock()
 
