@@ -29,6 +29,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /keys/{key}", s.handleDelete)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -143,5 +144,28 @@ func TestServer_DeleteThenGetNotFound(t *testing.T) {
 	getResp := doRequest(t, s, http.MethodGet, "/keys/k1", nil)
 	if getResp.Code != http.StatusNotFound {
 		t.Fatalf("GET-after-delete status = %d, want %d; body=%q", getResp.Code, http.StatusNotFound, getResp.Body.String())
+	}
+}
+
+func TestServer_MetricsRoute(t *testing.T) {
+	s := newTestServer(t, nil) // your existing helper
+
+	_ = doRequest(t, s, http.MethodPut, "/keys/a", []byte("one"))
+	_ = doRequest(t, s, http.MethodGet, "/keys/a", nil)       // hit
+	_ = doRequest(t, s, http.MethodGet, "/keys/missing", nil) // miss
+	_ = doRequest(t, s, http.MethodDelete, "/keys/a", nil)
+
+	rr := doRequest(t, s, http.MethodGet, "/metrics", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+
+	var m engine.MetricsSnapshot
+	if err := json.NewDecoder(rr.Body).Decode(&m); err != nil {
+		t.Fatalf("decode metrics: %v", err)
+	}
+
+	if m.Sets < 1 || m.Gets < 2 || m.GetHits < 1 || m.GetMisses < 1 || m.Deletes < 1 {
+		t.Fatalf("unexpected metrics: %+v", m)
 	}
 }

@@ -58,6 +58,9 @@ func Open(cfg Config) (*Engine, error) {
 		metrics: NewMetrics(),
 	}
 
+	replayStart := time.Now()
+	var replayCount uint64
+
 	snap, err := e.loadSnapshot()
 	if err != nil {
 		_ = wal.Close()
@@ -75,12 +78,14 @@ func Open(cfg Config) (*Engine, error) {
 		default:
 			return ErrUnknownOp
 		}
+		replayCount++
 		return nil
 	}); err != nil {
 		_ = wal.Close()
 		return nil, fmt.Errorf("replay wal: %w", err)
 	}
-
+	e.metrics.AddReplayRecords(replayCount)
+	e.metrics.SetReplayDuration(time.Since(replayStart))
 	if cfg.SyncPolicy == SyncPeriodic {
 		e.startSyncLoop()
 	}
@@ -107,7 +112,10 @@ func (e *Engine) Set(key string, value []byte) error {
 		return fmt.Errorf("%w: %v", ErrFailedToAppendToWAL, err)
 	}
 
+	e.metrics.IncWALAppend()
+
 	e.index[key] = bytes.Clone(value)
+	e.metrics.IncSet()
 
 	if e.config.MaxWALSizeBytes > 0 && e.wal != nil && e.wal.file != nil {
 		info, err := e.wal.file.Stat()
@@ -139,11 +147,14 @@ func (e *Engine) Get(key string) ([]byte, bool, error) {
 		return nil, false, ErrClosed
 	}
 
+	e.metrics.IncGet()
 	value, ok := e.index[key]
 	if !ok {
+		e.metrics.IncGetMiss()
 		return nil, false, nil
 	}
 
+	e.metrics.IncGetHit()
 	return bytes.Clone(value), true, nil
 }
 
@@ -162,7 +173,10 @@ func (e *Engine) Delete(key string) error {
 		return fmt.Errorf("%w: %v", ErrFailedToAppendToWAL, err)
 	}
 
+	e.metrics.IncWALAppend()
+
 	delete(e.index, key)
+	e.metrics.IncDelete()
 
 	if e.config.MaxWALSizeBytes > 0 && e.wal != nil && e.wal.file != nil {
 		info, err := e.wal.file.Stat()
@@ -232,7 +246,7 @@ func (e *Engine) syncLoop() {
 		interval = time.Second
 	}
 
-	ticker := time.NewTicker(e.config.SyncInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {

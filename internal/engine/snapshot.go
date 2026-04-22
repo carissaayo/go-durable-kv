@@ -119,6 +119,7 @@ func (e *Engine) snapshotAndCompact() error {
 	if err := e.truncateWAL(); err != nil {
 		return fmt.Errorf("compact: truncate wal: %w", err)
 	}
+	e.metrics.IncCompaction()
 	return nil
 }
 
