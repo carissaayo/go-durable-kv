@@ -1,11 +1,11 @@
 package engine
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 )
@@ -123,23 +123,27 @@ func (e *Engine) snapshotAndCompact() error {
 }
 
 func (e *Engine) truncateWAL() error {
-
 	if e.wal == nil {
 		return errors.New("wal is nil")
 	}
 
+	// Flush current buffered data first.
 	if err := e.wal.Sync(); err != nil {
 		return fmt.Errorf("sync wal before truncate: %w", err)
 	}
 
-	if err := e.wal.file.Truncate(0); err != nil {
-		return fmt.Errorf("truncate wal file: %w", err)
+	// Close old append handle (important on Windows).
+	if err := e.wal.file.Close(); err != nil {
+		return fmt.Errorf("close wal before truncate: %w", err)
 	}
 
-	if _, err := e.wal.file.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("seek wal after truncate: %w", err)
+	// Reopen/truncate as a fresh file.
+	f, err := os.OpenFile(e.wal.path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("reopen truncated wal: %w", err)
 	}
 
-	e.wal.buf.Reset(e.wal.file)
+	e.wal.file = f
+	e.wal.buf = bufio.NewWriter(f)
 	return nil
 }
