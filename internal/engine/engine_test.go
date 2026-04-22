@@ -13,6 +13,13 @@ func newTestEngine(t *testing.T) *Engine {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
+
+	t.Cleanup(func() {
+		if err := e.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
 	return e
 }
 
