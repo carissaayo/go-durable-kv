@@ -107,6 +107,8 @@ func (e *Engine) Set(key string, value []byte) error {
 		shouldCompact = currentWALBytes >= e.config.MaxWALSizeBytes
 	}
 
+	e.mu.Unlock()
+
 	if shouldCompact {
 		if err := e.snapshotAndCompact(); err != nil {
 			return fmt.Errorf("auto-compact after set: %w", err)
