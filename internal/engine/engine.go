@@ -142,17 +142,40 @@ func (e *Engine) Get(key string) ([]byte, bool, error) {
 }
 
 func (e *Engine) Delete(key string) error {
+	var shouldCompact bool
+
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	if e.closed {
+		e.mu.Unlock()
 		return ErrClosed
 	}
 
 	if err := e.wal.Append(OpDelete, key, nil); err != nil {
+		e.mu.Unlock()
 		return fmt.Errorf("%w: %v", ErrFailedToAppendToWAL, err)
 	}
+
 	delete(e.index, key)
+
+	if e.config.MaxWALSizeBytes > 0 && e.wal != nil && e.wal.file != nil {
+		info, err := e.wal.file.Stat()
+		if err != nil {
+			e.mu.Unlock()
+			return fmt.Errorf("stat wal: %w", err)
+		}
+		currentWALBytes := info.Size() + int64(e.wal.buf.Buffered())
+		shouldCompact = currentWALBytes >= e.config.MaxWALSizeBytes
+	}
+
+	e.mu.Unlock()
+
+	if shouldCompact {
+		if err := e.snapshotAndCompact(); err != nil {
+			return fmt.Errorf("auto-compact after delete: %w", err)
+		}
+	}
+
 	return nil
 }
 
