@@ -214,17 +214,17 @@ func (e *Engine) Close() error {
 }
 
 func (e *Engine) startSyncLoop() {
-
-	if e.config.SyncInterval <= 0 {
-		e.config.SyncInterval = time.Second
-	}
-
 	e.wg.Add(1)
 	go e.syncLoop()
 }
 
 func (e *Engine) syncLoop() {
 	defer e.wg.Done()
+
+	interval := e.config.SyncInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
 
 	ticker := time.NewTicker(e.config.SyncInterval)
 	defer ticker.Stop()
