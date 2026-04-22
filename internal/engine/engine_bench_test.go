@@ -2,7 +2,9 @@ package engine
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func newBenchEngine(b *testing.B, syncPolicy SyncPolicy) *Engine {
@@ -103,6 +105,31 @@ func BenchmarkEngineDelete(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if err := e.Delete(keys[i]); err != nil {
 			b.Fatalf("Delete() error = %v", err)
+		}
+	}
+}
+
+func BenchmarkEngineSet_SyncPeriodic(b *testing.B) {
+	cfg := DefaultConfig(b.TempDir())
+	cfg.SyncPolicy = SyncPeriodic
+	cfg.SyncInterval = 10 * time.Millisecond
+	cfg.MaxWALSizeBytes = 1 << 62 // avoid compaction noise in benchmark
+
+	e, err := Open(cfg)
+	if err != nil {
+		b.Fatalf("Open() error = %v", err)
+	}
+	b.Cleanup(func() {
+		_ = e.Close()
+	})
+
+	value := []byte("value")
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		key := strconv.Itoa(i)
+		if err := e.Set(key, value); err != nil {
+			b.Fatalf("Set() error = %v", err)
 		}
 	}
 }
