@@ -7,16 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
-
-type Engine struct {
-	config Config
-	db     *os.File // or a more specific handle
-	mu     sync.RWMutex
-	index  map[string][]byte
-	closed bool
-	wal    *WAL
-}
 
 var (
 	ErrClosed              = errors.New("engine is closed")
@@ -24,6 +16,17 @@ var (
 	ErrKeyTooLarge         = errors.New("key exceeds uint32 WAL limit")
 	ErrFailedToAppendToWAL = errors.New("unable to append to WAL")
 )
+
+type Engine struct {
+	config Config
+	db     *os.File
+	mu     sync.RWMutex
+	index  map[string][]byte
+	closed bool
+	wal    *WAL
+	stopCh chan struct{}
+	wg     sync.WaitGroup
+}
 
 func Open(cfg Config) (*Engine, error) {
 
@@ -46,6 +49,7 @@ func Open(cfg Config) (*Engine, error) {
 		config: cfg,
 		index:  make(map[string][]byte),
 		wal:    wal,
+		stopCh: make(chan struct{}),
 	}
 
 	snap, err := e.loadSnapshot()
@@ -71,6 +75,9 @@ func Open(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("replay wal: %w", err)
 	}
 
+	if cfg.SyncPolicy == SyncPeriodic {
+		e.startSyncLoop()
+	}
 	return e, nil
 }
 
@@ -102,7 +109,7 @@ func (e *Engine) Set(key string, value []byte) error {
 			e.mu.Unlock()
 			return fmt.Errorf("stat wal: %w", err)
 		}
-		// Include bytes still in bufio buffer.
+
 		currentWALBytes := info.Size() + int64(e.wal.buf.Buffered())
 		shouldCompact = currentWALBytes >= e.config.MaxWALSizeBytes
 	}
@@ -151,28 +158,70 @@ func (e *Engine) Delete(key string) error {
 
 func (e *Engine) Close() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	if e.closed {
-		return nil // idempotent close
+		e.mu.Unlock()
+		return nil
 	}
 
 	e.closed = true
 
+	periodic := e.config.SyncPolicy == SyncPeriodic
+	e.mu.Unlock()
+
+	if periodic {
+		e.stopSyncLoop()
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if e.wal != nil {
 		if err := e.wal.Close(); err != nil {
 			return err
-
 		}
-
 	}
-
 	if e.db != nil {
 		if err := e.db.Close(); err != nil {
 			return err
 		}
 		e.db = nil
 	}
-
 	return nil
+}
+
+func (e *Engine) startSyncLoop() {
+	e.wg.Add(1)
+	go e.syncLoop()
+}
+
+func (e *Engine) syncLoop() {
+	defer e.wg.Done()
+
+	ticker := time.NewTicker(e.config.SyncInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			e.mu.Lock()
+			if e.closed {
+				e.mu.Unlock()
+				return
+			}
+			if err := e.wal.Sync(); err != nil {
+				fmt.Printf("periodic sync error: %v\n", err)
+			}
+			e.mu.Unlock()
+
+		case <-e.stopCh:
+			return
+		}
+
+	}
+}
+
+func (e *Engine) stopSyncLoop() {
+	close(e.stopCh)
+	e.wg.Wait()
 }
