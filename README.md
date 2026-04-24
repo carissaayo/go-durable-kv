@@ -15,7 +15,18 @@ A key-value storage engine with full disk durability.
 
 - Writes are first appended to a Write-Ahead Log (WAL) before being applied to memory.
 - On restart, the engine replays the WAL (from last snapshot) to rebuild state.
-- Periodic snapshots compact the WAL to keep replay time bounded.
+- Snapshot + compaction keep replay time bounded.
+
+### Current Implementation Status
+
+- In-memory `Set` / `Get` / `Delete` with `sync.RWMutex`
+- WAL append-before-apply with CRC32 record validation
+- Recovery on startup: load snapshot then replay WAL
+- Snapshot persisted via `snapshot.tmp` + atomic rename
+- WAL compaction (truncate/reset) after snapshot
+- Sync policies: `SyncNone`, `SyncAlways`, `SyncPeriodic` (ticker loop)
+- HTTP endpoints: `/keys/{key}`, `/health`, `/metrics`
+- Graceful shutdown in server (`Shutdown` + engine close)
 
 > Constraint: stdlib-only (no external DB, no ORM)  
 > Goal: Understand durability, correctness, and crash recovery at the storage layer
@@ -40,7 +51,7 @@ A key-value storage engine with full disk durability.
 | Index | In-memory map | map[string][]byte + RWMutex | Fast reads/writes |
 | Integrity | Checksum | hash/crc32 | Detect corruption |
 | Transport | HTTP/TCP | net/http or net | Client interface |
-| Observability | Logger | log/slog | Recovery + traces |
+| Observability | Metrics | sync/atomic + JSON endpoint | Runtime counters + replay stats |
 
 ---
 
@@ -63,7 +74,7 @@ func (w *WAL) Append(op Op, key, val []byte) error {
     if _, err := w.buf.Write(rec); err != nil {
         return err
     }
-    if w.syncPolicy == SyncEveryWrite {
+    if w.syncPolicy == SyncAlways {
         return w.file.Sync()
     }
     return nil
@@ -98,8 +109,8 @@ write -> kill process -> restart -> verify data
 
 | Policy | Durability | Throughput |
 |---|---|---|
-| SyncEveryWrite | Highest | Lowest |
-| SyncBatched | Medium | Medium/High |
+| SyncAlways | Highest | Lowest |
+| SyncPeriodic | Medium | Medium/High |
 | SyncNone | Lowest | Highest |
 
 ---
@@ -130,6 +141,7 @@ Keep transport thin. Only parse requests and call engine methods.
 | PUT | /keys/{key} | 204 |
 | DELETE | /keys/{key} | 204 |
 | GET | /health | 200 |
+| GET | /metrics | 200 JSON |
 
 ---
 
@@ -147,7 +159,7 @@ Keep transport thin. Only parse requests and call engine methods.
 - Write then restart
 - Corrupt WAL tail
 - Snapshot then restart
-- `go test -race`
+- `go test ./...`
 
 ---
 
@@ -163,7 +175,11 @@ durable-kv/
 │   │   ├── engine.go
 │   │   ├── wal.go
 │   │   ├── snapshot.go
-│   │   └── record.go
+│   │   ├── metrics.go
+│   │   ├── engine_test.go
+│   │   ├── replay_test.go
+│   │   ├── snapshot_test.go
+│   │   └── engine_bench_test.go
 │   └── transport/
 │       └── http.go
 ├── docs/
@@ -213,6 +229,6 @@ durable-kv/
 ## Stretch Goals
 
 - Group commit batching
-- Metrics endpoint
-- Compaction stats
+- Advanced metrics export formats
+- Compaction stats endpoint
 - CLI client
