@@ -271,6 +271,8 @@ func (l *RaftLog) ReadAt(offset int64) (payload []byte, nextOffset int64, err er
 }
 
 func (l *RaftLog) Sync() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if err := l.buf.Flush(); err != nil { // flush bufio buffer → OS
 		return err
 	}
@@ -279,6 +281,8 @@ func (l *RaftLog) Sync() error {
 }
 
 func (l *RaftLog) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if err := l.Sync(); err != nil {
 		return err
 	}
