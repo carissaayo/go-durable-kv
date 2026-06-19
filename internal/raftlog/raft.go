@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 
@@ -83,6 +84,15 @@ func repairTail(f *os.File) (int64, error) {
 		var crcBuf [crcSize]byte
 		if _, err := io.ReadFull(r, crcBuf[:]); err != nil {
 			// File ended mid-checksum.
+			break
+		}
+
+		// checksum check
+		h := crc32.NewIEEE()
+		h.Write(lenBuf[:])
+		h.Write(payload)
+		if h.Sum32() != binary.BigEndian.Uint32(crcBuf[:]) {
+			// Mismatch at the tail = crash during the checksum write.
 			break
 		}
 	}
