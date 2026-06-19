@@ -79,6 +79,12 @@ func repairTail(f *os.File) (int64, error) {
 			break
 		}
 
+		// CRC32 checksum
+		var crcBuf [crcSize]byte
+		if _, err := io.ReadFull(r, crcBuf[:]); err != nil {
+			// File ended mid-checksum.
+			break
+		}
 	}
 	return 0, nil
 }
