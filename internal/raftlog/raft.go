@@ -65,7 +65,19 @@ func repairTail(f *os.File) (int64, error) {
 			return 0, err
 		}
 
+		// Check the declared length; zero is never valid and a greater value means the feld itself is corrupt
 		payloadLen := binary.BigEndian.Uint32(lenBuf[:])
+
+		if payloadLen == 0 || payloadLen > maxPayload {
+			break
+		}
+
+		// check the payload
+		payload := make([]byte, payloadLen)
+		if _, err := io.ReadFull(r, payload); err != nil {
+			// File ended mid-payload.
+			break
+		}
 
 	}
 	return 0, nil
