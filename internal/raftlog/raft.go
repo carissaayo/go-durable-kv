@@ -14,6 +14,8 @@ import (
 	"github.com/carissaayo/go-durable-kv/internal/engine"
 )
 
+var errTornRecord = errors.New("raftlog: torn or corrupt record")
+
 type RaftLog struct {
 	mu         sync.Mutex
 	file       *os.File
@@ -189,6 +191,49 @@ func (l *RaftLog) Append(payload []byte) (offset int64, err error) {
 	return startOffset, nil
 }
 
+// Walk every complete record from byte 0 (for index rebuild on startup). Flushes buffered writes first so in-process appends are visible.
+func (l *RaftLog) Scan(apply func(offset int64, payload []byte) error) error {
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.path == "" || l.file == nil {
+		return errors.New("raftlog not initialized")
+	}
+
+	if err := l.buf.Flush(); err != nil {
+		return fmt.Errorf("raftlog: flush before scan: %w", err)
+	}
+
+	f, err := os.Open(l.path)
+	if err != nil {
+		return fmt.Errorf("raftlog: open for scan: %w", err)
+	}
+	defer f.Close()
+
+	r := bufio.NewReader(f)
+	var currentOffset int64
+
+	for {
+		payload, frameSize, err := readFrame(r)
+
+		if errors.Is(err, errTornRecord) {
+			return nil // clean stop at tail (same as repairTail)
+		}
+
+		if err != nil {
+			return fmt.Errorf("raftlog: scan: %w", err)
+		}
+
+		recordStart := currentOffset
+		currentOffset += frameSize
+
+		if err := apply(recordStart, payload); err != nil {
+			return err
+		}
+	}
+}
+
 func (l *RaftLog) Sync() error {
 	if err := l.buf.Flush(); err != nil { // flush bufio buffer → OS
 		return err
@@ -202,4 +247,49 @@ func (l *RaftLog) Close() error {
 		return err
 	}
 	return l.file.Close()
+}
+
+func readFrame(r io.Reader) (payload []byte, frameSize int64, err error) {
+	var lenBuf [lenSize]byte
+
+	_, err = io.ReadFull(r, lenBuf[:])
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, 0, errTornRecord
+	}
+
+	if err != nil {
+		return nil, 0, fmt.Errorf("read length: %w", err)
+	}
+
+	payloadLen := binary.BigEndian.Uint32(lenBuf[:])
+	if payloadLen == 0 || payloadLen > maxPayload {
+		return nil, 0, errTornRecord
+	}
+
+	payload = make([]byte, payloadLen)
+	if _, err = io.ReadFull(r, payload); err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, 0, errTornRecord
+		}
+		return nil, 0, fmt.Errorf("read payload: %w", err)
+	}
+
+	var crcBuf [crcSize]byte
+	if _, err = io.ReadFull(r, crcBuf[:]); err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, 0, errTornRecord
+		}
+		return nil, 0, fmt.Errorf("read crc: %w", err)
+	}
+
+	h := crc32.NewIEEE()
+	h.Write(lenBuf[:])
+	h.Write(payload)
+	if h.Sum32() != binary.BigEndian.Uint32(crcBuf[:]) {
+		return nil, 0, errTornRecord
+	}
+
+	frameSize = int64(lenSize) + int64(payloadLen) + int64(crcSize)
+
+	return payload, frameSize, nil
 }
