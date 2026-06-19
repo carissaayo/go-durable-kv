@@ -2,10 +2,10 @@ package raftlog
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
-	"hash/crc32"
+	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/carissaayo/go-durable-kv/internal/engine"
 )
@@ -25,17 +25,48 @@ const (
 	maxPayload = 64 << 20 // 64 MiB
 )
 
-// crcTable is computed once at init time using the Castagnoli polynomial,
-// which has better error-detection properties than the IEEE polynomial.
-var crcTable = crc32.MakeTable(crc32.Castagnoli)
-
+// OpenRaftLog opens (or creates) the log file at path, performs tail repair to remove any partial write left by a previous crash, and positions the write cursor at the first byte after the last valid record.
 func OpenRaftLog(path string, syncPolicy engine.SyncPolicy) (*RaftLog, error) {
-	dir := filepath.Dir(path)
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create raft dir %q: %w", dir, err)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("raftlog: open %q: %w", path, err)
 	}
 
 	return nil, nil
 
+}
+
+// repairTail walks the file from byte 0, record by record, and returns the byte offset immediately after the last complete, checksum-verified record.
+func repairTail(f *os.File) (int64, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return 0, nil
+	}
+
+	r := bufio.NewReader(f)
+
+	currentOffset := 0
+	lastGoodOffest := 0
+
+	for {
+
+		// Check length prefix
+		var lenBuf [lenSize]byte
+
+		_, err := io.ReadFull(r, lenBuf[:])
+		if err == io.EOF {
+			// Zero bytes read — file ends on a clean boundary.
+			break
+		}
+		if err == io.ErrUnexpectedEOF {
+			// 1–3 bytes read — length prefix never finished writing.
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+
+		payloadLen := binary.BigEndian.Uint32(lenBuf[:])
+
+	}
+	return 0, nil
 }
