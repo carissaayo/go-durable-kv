@@ -7,17 +7,20 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"path/filepath"
+	"sync"
 
 	"github.com/carissaayo/go-durable-kv/internal/engine"
 )
 
 type RaftLog struct {
+	mu         sync.Mutex
 	file       *os.File
 	buf        *bufio.Writer
 	path       string
 	syncPolicy engine.SyncPolicy
 
-	nextOffset int64 // byte offset where the next record will start
+	offset int64 // byte offset of the next Append (= end of last valid record)
 }
 
 const (
@@ -28,19 +31,50 @@ const (
 
 // OpenRaftLog opens (or creates) the log file at path, performs tail repair to remove any partial write left by a previous crash, and positions the write cursor at the first byte after the last valid record.
 func OpenRaftLog(path string, syncPolicy engine.SyncPolicy) (*RaftLog, error) {
+	dir := filepath.Dir(path)
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create wal dir %q: %w", dir, err)
+	}
+
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("raftlog: open %q: %w", path, err)
 	}
 
-	return nil, nil
+	// Walk every record to find the last clean boundary.
+	lastGood, err := repairTail(f)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("raftlog: tail repair: %w", err)
+	}
+
+	// Remove the bytes left by a partial write. On a clean file lastGood == file size,
+	if err := f.Truncate(lastGood); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("raftlog: truncate to %d: %w", lastGood, err)
+	}
+
+	// Park the write cursor at the end of the last valid record.
+	if _, err := f.Seek(lastGood, io.SeekStart); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("raftlog: seek to %d: %w", lastGood, err)
+	}
+
+	return &RaftLog{
+		file:       f,
+		buf:        bufio.NewWriter(f),
+		path:       path,
+		syncPolicy: syncPolicy,
+		offset:     lastGood,
+	}, nil
 
 }
 
 // repairTail walks the file from byte 0, record by record, and returns the byte offset immediately after the last complete, checksum-verified record.
 func repairTail(f *os.File) (int64, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return 0, nil
+		return 0, err
 	}
 
 	r := bufio.NewReader(f)
