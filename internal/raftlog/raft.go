@@ -45,8 +45,10 @@ func repairTail(f *os.File) (int64, error) {
 
 	r := bufio.NewReader(f)
 
-	currentOffset := 0
-	lastGoodOffest := 0
+	var (
+		currentOffset  int64
+		lastGoodOffset int64
+	)
 
 	for {
 
@@ -95,6 +97,10 @@ func repairTail(f *os.File) (int64, error) {
 			// Mismatch at the tail = crash during the checksum write.
 			break
 		}
+
+		currentOffset += int64(lenSize) + int64(payloadLen) + int64(crcSize)
+
+		lastGoodOffset = currentOffset
 	}
-	return 0, nil
+	return lastGoodOffset, nil
 }
