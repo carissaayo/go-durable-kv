@@ -2,6 +2,7 @@ package raftlog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -191,7 +192,7 @@ func (l *RaftLog) Append(payload []byte) (offset int64, err error) {
 	return startOffset, nil
 }
 
-// Walk every complete record from byte 0 (for index rebuild on startup). Flushes buffered writes first so in-process appends are visible.
+// Walks every complete record from byte 0 (for index rebuild on startup). Flushes buffered writes first so in-process appends are visible.
 func (l *RaftLog) Scan(apply func(offset int64, payload []byte) error) error {
 
 	l.mu.Lock()
@@ -232,6 +233,41 @@ func (l *RaftLog) Scan(apply func(offset int64, payload []byte) error) error {
 			return err
 		}
 	}
+}
+
+// Reads one record at the given byte offset (from Append or Scan).
+func (l *RaftLog) ReadAt(offset int64) (payload []byte, nextOffset int64, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.path == "" || l.file == nil {
+		return nil, 0, errors.New("raftlog not initialized")
+	}
+
+	if offset < 0 {
+		return nil, 0, errors.New("raftlog: negative offset")
+	}
+
+	if err := l.buf.Flush(); err != nil {
+		return nil, 0, fmt.Errorf("raftlog: flush before read: %w", err)
+	}
+
+	f, err := os.Open(l.path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("raftlog: open for read: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, 0, fmt.Errorf("raftlog: seek to %d: %w", offset, err)
+	}
+
+	raw, frameSize, err := readFrame(bufio.NewReader(f))
+	if err != nil {
+		return nil, 0, fmt.Errorf("raftlog: read at %d: %w", offset, err)
+	}
+
+	return bytes.Clone(raw), offset + frameSize, nil
 }
 
 func (l *RaftLog) Sync() error {
