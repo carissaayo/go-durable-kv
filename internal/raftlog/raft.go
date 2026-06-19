@@ -147,39 +147,46 @@ func (l *RaftLog) Append(payload []byte) (offset int64, err error) {
 	defer l.mu.Unlock()
 
 	// Payload guards
-	if l == nil || l.file == nil || l.buf == nil {
-		return 0, errors.New("raftlog not initiated")
+	if l.file == nil || l.buf == nil {
+		return 0, errors.New("raftlog not initialized")
+	}
+	if len(payload) == 0 || len(payload) > maxPayload {
+		return 0, errors.New("invalid payload size")
 	}
 
-	// repairTail rejects payloadLen == 0
-	if len(payload) == 0 {
-		return 0, errors.New("empty payload")
-	}
-
-	if len(payload) > maxPayload {
-		return 0, errors.New("payload too large")
-	}
-
-	recordOffset := l.offset
+	startOffset := l.offset
 
 	// build the record
 	var lenBuf [lenSize]byte
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload)))
+
 	h := crc32.NewIEEE()
 	h.Write(lenBuf[:])
 	h.Write(payload)
+
 	var crcBuf [crcSize]byte
 	binary.BigEndian.PutUint32(crcBuf[:], h.Sum32())
 
-	recordOffset += int64(lenSize) + int64(len(payload)) + int64(crcSize)
-	l.offset = recordOffset
+	if _, err := l.buf.Write(lenBuf[:]); err != nil {
+		return 0, fmt.Errorf("raftlog write length: %w", err)
+	}
+	if _, err := l.buf.Write(payload); err != nil {
+		return 0, fmt.Errorf("raftlog write payload: %w", err)
+	}
+	if _, err := l.buf.Write(crcBuf[:]); err != nil {
+		return 0, fmt.Errorf("raftlog write crc: %w", err)
+	}
 
 	if l.syncPolicy == engine.SyncAlways {
 		if err := l.Sync(); err != nil {
-			return 0, errors.New("raftlog sync error")
+			return 0, fmt.Errorf("raftlog sync: %w", err)
 		}
 	}
-	return 0, nil
+
+	recordSize := int64(lenSize) + int64(len(payload)) + int64(crcSize)
+	l.offset = startOffset + recordSize
+
+	return startOffset, nil
 }
 
 func (l *RaftLog) Sync() error {
