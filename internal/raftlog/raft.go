@@ -160,5 +160,19 @@ func (l *RaftLog) Append(payload []byte) (offset int64, err error) {
 		return 0, errors.New("payload too large")
 	}
 
+	recordOffset := l.offset
+
+	// build the record
+	var lenBuf [lenSize]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload)))
+	h := crc32.NewIEEE()
+	h.Write(lenBuf[:])
+	h.Write(payload)
+	var crcBuf [crcSize]byte
+	binary.BigEndian.PutUint32(crcBuf[:], h.Sum32())
+
+	recordOffset += int64(lenSize) + int64(len(payload)) + int64(crcSize)
+	l.offset = recordOffset
+
 	return 0, nil
 }
