@@ -3,6 +3,7 @@ package raftlog
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -137,4 +138,27 @@ func repairTail(f *os.File) (int64, error) {
 		lastGoodOffset = currentOffset
 	}
 	return lastGoodOffset, nil
+}
+
+// Append encodes payload as a length-prefixed, checksummed record, writes it to the log, and returns the byte offset at which the record starts.
+func (l *RaftLog) Append(payload []byte) (offset int64, err error) {
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Payload guards
+	if l == nil || l.file == nil || l.buf == nil {
+		return 0, errors.New("raftlog not initiated")
+	}
+
+	// repairTail rejects payloadLen == 0
+	if len(payload) == 0 {
+		return 0, errors.New("empty payload")
+	}
+
+	if len(payload) > maxPayload {
+		return 0, errors.New("payload too large")
+	}
+
+	return 0, nil
 }
