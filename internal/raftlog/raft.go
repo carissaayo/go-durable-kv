@@ -174,5 +174,25 @@ func (l *RaftLog) Append(payload []byte) (offset int64, err error) {
 	recordOffset += int64(lenSize) + int64(len(payload)) + int64(crcSize)
 	l.offset = recordOffset
 
+	if l.syncPolicy == engine.SyncAlways {
+		if err := l.Sync(); err != nil {
+			return 0, errors.New("raftlog sync error")
+		}
+	}
 	return 0, nil
+}
+
+func (l *RaftLog) Sync() error {
+	if err := l.buf.Flush(); err != nil { // flush bufio buffer → OS
+		return err
+	}
+
+	return l.file.Sync() // fsync → disk
+}
+
+func (l *RaftLog) Close() error {
+	if err := l.Sync(); err != nil {
+		return err
+	}
+	return l.file.Close()
 }
