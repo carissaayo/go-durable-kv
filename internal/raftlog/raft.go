@@ -38,7 +38,7 @@ func OpenRaftLog(path string, syncPolicy engine.SyncPolicy) (*RaftLog, error) {
 	dir := filepath.Dir(path)
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create wal dir %q: %w", dir, err)
+		return nil, fmt.Errorf("create raft dir %q: %w", dir, err)
 	}
 
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
@@ -83,64 +83,17 @@ func repairTail(f *os.File) (int64, error) {
 
 	r := bufio.NewReader(f)
 
-	var (
-		currentOffset  int64
-		lastGoodOffset int64
-	)
-
+	var lastGood int64
 	for {
-
-		// Check length prefix
-		var lenBuf [lenSize]byte
-
-		_, err := io.ReadFull(r, lenBuf[:])
-		if err == io.EOF {
-			// Zero bytes read — file ends on a clean boundary.
-			break
-		}
-		if err == io.ErrUnexpectedEOF {
-			// 1–3 bytes read — length prefix never finished writing.
-			break
+		_, frameSize, err := readFrame(r)
+		if errors.Is(err, errTornRecord) {
+			return lastGood, nil // clean end or torn tail — stop here
 		}
 		if err != nil {
-			return 0, err
+			return 0, err // real I/O error
 		}
-
-		// Check the declared length; zero is never valid and a greater value means the feld itself is corrupt
-		payloadLen := binary.BigEndian.Uint32(lenBuf[:])
-
-		if payloadLen == 0 || payloadLen > maxPayload {
-			break
-		}
-
-		// check the payload
-		payload := make([]byte, payloadLen)
-		if _, err := io.ReadFull(r, payload); err != nil {
-			// File ended mid-payload.
-			break
-		}
-
-		// CRC32 checksum
-		var crcBuf [crcSize]byte
-		if _, err := io.ReadFull(r, crcBuf[:]); err != nil {
-			// File ended mid-checksum.
-			break
-		}
-
-		// checksum check
-		h := crc32.NewIEEE()
-		h.Write(lenBuf[:])
-		h.Write(payload)
-		if h.Sum32() != binary.BigEndian.Uint32(crcBuf[:]) {
-			// Mismatch at the tail = crash during the checksum write.
-			break
-		}
-
-		currentOffset += int64(lenSize) + int64(payloadLen) + int64(crcSize)
-
-		lastGoodOffset = currentOffset
+		lastGood += frameSize
 	}
-	return lastGoodOffset, nil
 }
 
 // Append encodes payload as a length-prefixed, checksummed record, writes it to the log, and returns the byte offset at which the record starts.
