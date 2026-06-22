@@ -134,7 +134,7 @@ func (l *RaftLog) Append(payload []byte) (offset int64, err error) {
 	}
 
 	if l.syncPolicy == engine.SyncAlways {
-		if err := l.Sync(); err != nil {
+		if err := l.syncLocked(); err != nil {
 			return 0, fmt.Errorf("raftlog sync: %w", err)
 		}
 	}
@@ -223,20 +223,27 @@ func (l *RaftLog) ReadAt(offset int64) (payload []byte, nextOffset int64, err er
 	return bytes.Clone(raw), offset + frameSize, nil
 }
 
+// syncLocked flushes and fsyncs. Caller must hold l.mu.
+func (l *RaftLog) syncLocked() error {
+	if l.buf == nil || l.file == nil {
+		return errors.New("raftlog not initialized")
+	}
+	if err := l.buf.Flush(); err != nil {
+		return err
+	}
+	return l.file.Sync()
+}
+
 func (l *RaftLog) Sync() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := l.buf.Flush(); err != nil { // flush bufio buffer → OS
-		return err
-	}
-
-	return l.file.Sync() // fsync → disk
+	return l.syncLocked()
 }
 
 func (l *RaftLog) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := l.Sync(); err != nil {
+	if err := l.syncLocked(); err != nil {
 		return err
 	}
 	return l.file.Close()
