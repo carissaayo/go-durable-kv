@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -140,4 +141,153 @@ func TestOpen_LoadsSnapshot_ThenReplaysWALTail(t *testing.T) {
 	assertKV("a", "1")
 	assertKV("b", "new")
 	assertKV("c", "3")
+}
+
+func TestSnapshotData_ReturnsClonedMap(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	cfg.SyncPolicy = SyncAlways
+
+	e, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer e.Close()
+
+	if err := e.Set("k", []byte("v")); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	data, err := e.SnapshotData()
+	if err != nil {
+		t.Fatalf("SnapshotData() error = %v", err)
+	}
+	if string(data["k"]) != "v" {
+		t.Fatalf("SnapshotData() k = %q, want %q", data["k"], "v")
+	}
+
+	data["k"] = []byte("mutated")
+	got, ok, err := e.Get("k")
+	if err != nil || !ok || string(got) != "v" {
+		t.Fatalf("engine mutated after SnapshotData clone; got=%q ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestRestoreSnapshot_ReplacesState_TruncatesWAL_PersistsSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	cfg.SyncPolicy = SyncAlways
+	cfg.MaxWALSizeBytes = 1 << 62
+
+	e1, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("Open #1 error = %v", err)
+	}
+
+	if err := e1.Set("old", []byte("gone")); err != nil {
+		t.Fatalf("Set old error = %v", err)
+	}
+	if err := e1.Set("keep", []byte("before")); err != nil {
+		t.Fatalf("Set keep error = %v", err)
+	}
+
+	restore := map[string][]byte{
+		"keep": []byte("after"),
+		"new":  []byte("key"),
+	}
+	if err := e1.RestoreSnapshot(restore); err != nil {
+		t.Fatalf("RestoreSnapshot() error = %v", err)
+	}
+
+	if _, ok, _ := e1.Get("old"); ok {
+		t.Fatal("old key should be gone after restore")
+	}
+	got, ok, err := e1.Get("keep")
+	if err != nil || !ok || string(got) != "after" {
+		t.Fatalf("keep mismatch: got=%q ok=%v err=%v", got, ok, err)
+	}
+	got, ok, err = e1.Get("new")
+	if err != nil || !ok || string(got) != "key" {
+		t.Fatalf("new mismatch: got=%q ok=%v err=%v", got, ok, err)
+	}
+
+	walPath := filepath.Join(dir, "wal.log")
+	info, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat wal error = %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("wal not truncated after restore, size=%d", info.Size())
+	}
+
+	if err := e1.Close(); err != nil {
+		t.Fatalf("Close #1 error = %v", err)
+	}
+
+	e2, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("Open #2 error = %v", err)
+	}
+	defer e2.Close()
+
+	got, ok, err = e2.Get("keep")
+	if err != nil || !ok || string(got) != "after" {
+		t.Fatalf("reopen keep mismatch: got=%q ok=%v err=%v", got, ok, err)
+	}
+	got, ok, err = e2.Get("new")
+	if err != nil || !ok || string(got) != "key" {
+		t.Fatalf("reopen new mismatch: got=%q ok=%v err=%v", got, ok, err)
+	}
+
+	snapPath := filepath.Join(dir, "snapshot.gob")
+	if _, err := os.Stat(snapPath); err != nil {
+		t.Fatalf("snapshot.gob missing after restore: %v", err)
+	}
+}
+
+func TestSnapshotData_RestoreSnapshot_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	cfg.SyncPolicy = SyncAlways
+
+	e1, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("Open #1 error = %v", err)
+	}
+
+	for _, kv := range []struct{ k, v string }{
+		{"a", "1"}, {"b", "2"},
+	} {
+		if err := e1.Set(kv.k, []byte(kv.v)); err != nil {
+			t.Fatalf("Set %q error = %v", kv.k, err)
+		}
+	}
+
+	data, err := e1.SnapshotData()
+	if err != nil {
+		t.Fatalf("SnapshotData() error = %v", err)
+	}
+
+	e2, err := Open(DefaultConfig(t.TempDir()))
+	if err != nil {
+		t.Fatalf("Open #2 error = %v", err)
+	}
+	defer e2.Close()
+
+	if err := e2.RestoreSnapshot(data); err != nil {
+		t.Fatalf("RestoreSnapshot() error = %v", err)
+	}
+
+	for _, kv := range []struct{ k, v string }{
+		{"a", "1"}, {"b", "2"},
+	} {
+		got, ok, err := e2.Get(kv.k)
+		if err != nil || !ok || !bytes.Equal(got, []byte(kv.v)) {
+			t.Fatalf("Get %q = %q ok=%v err=%v, want %q", kv.k, got, ok, err, kv.v)
+		}
+	}
+
+	if err := e1.Close(); err != nil {
+		t.Fatalf("Close #1 error = %v", err)
+	}
 }
