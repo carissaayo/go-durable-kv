@@ -89,6 +89,52 @@ func (e *Engine) saveSnapshot() error {
 	return writeSnapshotFile(e.config.DataDir, cloned)
 }
 
+// Returns a clone of the in-memory KV map for raft snapshot encoding.
+func (e *Engine) SnapshotData() (map[string][]byte, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.closed {
+		return nil, ErrClosed
+	}
+
+	cloned := make(map[string][]byte, len(e.index))
+	for k, v := range e.index {
+		cloned[k] = bytes.Clone(v)
+	}
+	return cloned, nil
+}
+
+// Replaces the in-memory map, writes snapshot.gob, and truncates the WAL. Used when installing a raft snapshot from a peer.
+func (e *Engine) RestoreSnapshot(data map[string][]byte) error {
+	if e.wal == nil {
+		return errors.New("wal is nil")
+	}
+
+	cloned := make(map[string][]byte, len(data))
+	for k, v := range data {
+		cloned[k] = bytes.Clone(v)
+	}
+
+	if err := writeSnapshotFile(e.config.DataDir, cloned); err != nil {
+		return fmt.Errorf("restore snapshot: write file: %w", err)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return ErrClosed
+	}
+
+	e.index = cloned
+
+	if err := e.truncateWAL(); err != nil {
+		return fmt.Errorf("restore snapshot: truncate wal: %w", err)
+	}
+	return nil
+}
+
 func (e *Engine) snapshotAndCompact() error {
 
 	if e.wal == nil {
