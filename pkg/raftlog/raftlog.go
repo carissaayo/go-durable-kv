@@ -20,3 +20,8 @@ const (
 func OpenRaftLog(path string, syncPolicy SyncPolicy) (*RaftLog, error) {
 	return ir.OpenRaftLog(path, syncPolicy)
 }
+
+// Truncate drops all bytes at and after byteOffset in the log file.
+func Truncate(l *RaftLog, byteOffset int64) error {
+	return l.Truncate(byteOffset)
+}

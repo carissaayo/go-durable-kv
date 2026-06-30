@@ -23,3 +23,13 @@ var (
 	Open          = ie.Open
 	DefaultConfig = ie.DefaultConfig
 )
+
+// SnapshotData returns a clone of the in-memory KV map for raft snapshots.
+func SnapshotData(e *Engine) (map[string][]byte, error) {
+	return e.SnapshotData()
+}
+
+// RestoreSnapshot replaces engine state from a raft snapshot payload.
+func RestoreSnapshot(e *Engine, data map[string][]byte) error {
+	return e.RestoreSnapshot(data)
+}

@@ -240,6 +240,83 @@ func (l *RaftLog) Sync() error {
 	return l.syncLocked()
 }
 
+// Truncate drops all bytes at and after byteOffset and resets the append cursor.
+func (l *RaftLog) Truncate(byteOffset int64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.file == nil || l.buf == nil {
+		return errors.New("raftlog not initialized")
+	}
+	if byteOffset < 0 {
+		return errors.New("raftlog: negative truncate offset")
+	}
+
+	if err := l.buf.Flush(); err != nil {
+		return fmt.Errorf("raftlog: flush before truncate: %w", err)
+	}
+	if err := l.file.Truncate(byteOffset); err != nil {
+		return fmt.Errorf("raftlog: truncate: %w", err)
+	}
+	if _, err := l.file.Seek(byteOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("raftlog: seek after truncate: %w", err)
+	}
+
+	l.buf = bufio.NewWriter(l.file)
+	l.offset = byteOffset
+
+	if l.syncPolicy == engine.SyncAlways {
+		return l.file.Sync()
+	}
+	return nil
+}
+
+// DropPrefix removes bytes [0, byteOffset) and rewrites the tail at the start of the file.
+func (l *RaftLog) DropPrefix(byteOffset int64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.file == nil || l.buf == nil {
+		return errors.New("raftlog not initialized")
+	}
+	if byteOffset <= 0 {
+		return nil
+	}
+
+	if err := l.buf.Flush(); err != nil {
+		return fmt.Errorf("raftlog: flush before drop prefix: %w", err)
+	}
+	if _, err := l.file.Seek(byteOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("raftlog: seek for drop prefix: %w", err)
+	}
+
+	tail, err := io.ReadAll(l.file)
+	if err != nil {
+		return fmt.Errorf("raftlog: read tail: %w", err)
+	}
+	if err := l.file.Truncate(0); err != nil {
+		return fmt.Errorf("raftlog: truncate for drop prefix: %w", err)
+	}
+	if _, err := l.file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("raftlog: seek start after drop prefix: %w", err)
+	}
+
+	l.buf = bufio.NewWriter(l.file)
+	if len(tail) > 0 {
+		if _, err := l.buf.Write(tail); err != nil {
+			return fmt.Errorf("raftlog: write tail: %w", err)
+		}
+	}
+	if l.syncPolicy == engine.SyncAlways {
+		if err := l.syncLocked(); err != nil {
+			return err
+		}
+	}
+
+	l.offset = int64(len(tail))
+	return nil
+}
+
 func (l *RaftLog) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
